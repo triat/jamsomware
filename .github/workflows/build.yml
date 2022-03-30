@@ -38,12 +38,13 @@ jobs:
         run: pyinstaller --onefile --dist dist -n jamsomeware jamsomware.py
 
   release:
+    runs-on: ubuntu-latest
     steps:
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
-          files:
-            - dist/jamsomeware.exe
-            - dist/jamsomeware
+          files: |
+            dist/jamsomeware.exe
+            dist/jamsomeware
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
