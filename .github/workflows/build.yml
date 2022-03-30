@@ -10,15 +10,29 @@ on:
   workflow_dispatch:
 
 jobs:
-  # This workflow contains a single job called "build"
+  create_release:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
   build:
     # The type of runner that the job will run on
+    needs: create_release
     runs-on: ${{ matrix.os }}
 
     strategy:
       matrix:
         python-version: ["3.10"]
         os: ["ubuntu-latest", "windows-latest"]
+        include:
+          - os: ubuntu-latest
+            file_name: jamsomeware
+          - os: windows-latest
+            file_name: jamsomeware.exe
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
@@ -36,15 +50,12 @@ jobs:
 
       - name: Package Application
         run: pyinstaller --onefile --dist dist -n jamsomeware jamsomware.py
-
-  release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            dist/jamsomeware.exe
-            dist/jamsomeware
+      
+      - name: Upload
+        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_release.outputs.upload_url }}
+          asset_path: ./build/${{ matrix.file_name }}
+          asset_name: ${{ matrix.file_name }}
