@@ -1,0 +1,49 @@
+---
+name: CI
+
+on:
+  push:
+    tags:
+      - v* # Push events to matching v*, i.e. v1.0, v20.15.10
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        python-version: ["3.10"]
+        os: ["ubuntu-latest", "windows-latest"]
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller pipenv
+          pipenv lock -r > requirements.txt
+          pip install -r requirements.txt
+
+      - name: Package Application
+        run: pyinstaller --onefile --dist dist -n jamsomeware jamsomware.py
+
+  release:
+    steps:
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files:
+            - dist/jamsomeware.exe
+            - dist/jamsomeware
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
